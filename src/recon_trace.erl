@@ -186,6 +186,7 @@
 
 %% Internal exports
 -export([count_tracer/1, rate_tracer/2, formatter/5, format_trace_output/1, format_trace_output/2]).
+-export([remote_calls/3, remote_clear/1]).
 
 -type matchspec()    :: [{[term()] | '_', [term()], [term()]}].
 -type shellfun()     :: fun((_) -> term()).
@@ -393,7 +394,11 @@ formatter(Tracer, IOServer, FormatterFun) ->
         {'EXIT', Tracer, Reason} ->
             exit(Reason);
         TraceMsg ->
-            io:format(IOServer, FormatterFun(TraceMsg), []),
+            is_pid(IOServer) andalso io:format(IOServer, FormatterFun(TraceMsg), []),
+            is_atom(IOServer) andalso is_pid(erlang:whereis(IOServer)) andalso
+                io:format(IOServer, FormatterFun(TraceMsg), []),
+            is_atom(IOServer) andalso is_pid(global:whereis_name(IOServer)) andalso
+                io:format(global:whereis_name(IOServer), FormatterFun(TraceMsg), []),
             formatter(Tracer, IOServer, FormatterFun)
     end.
 
@@ -731,3 +736,21 @@ join(Sep, List) ->
 join(Sep, List) ->
     string:join(List, Sep).
 -endif.
+
+
+remote_calls(Nodes, {M, F, A}, Max) ->
+    IoServer = register_io_server(Nodes),
+    Formatter = fun(Data) -> [_ | S] = recon_trace:format(Data), erlang:atom_to_list(erlang:node()) ++ " " ++ S end,
+    Opt = [{io_server, IoServer}, {formatter, Formatter}],
+    rpc:multicall(Nodes, recon_trace, calls, [{M, F, A}, Max, Opt], 5000).
+
+remote_clear(Nodes) ->
+    rpc:multicall(Nodes, recon_trace, clear, [], 5000),
+    recon_io_buffer:stop(global:whereis_name(recon_default_group_leader)).
+
+register_io_server(Nodes) ->
+    Default = recon_default_group_leader,
+    global:unregister_name(Default),
+    {ok, IoServer} = recon_io_buffer:start_link(Nodes),
+    global:register_name(Default, IoServer),
+    Default.
