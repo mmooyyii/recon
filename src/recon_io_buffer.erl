@@ -2,9 +2,7 @@
 -author("yimo").
 -behaviour(gen_server).
 -export([start_link/1]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
-    code_change/3]).
--export([stop/1]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 -define(SERVER, ?MODULE).
 
 
@@ -30,8 +28,9 @@ init([Nodes]) ->
         queue = {0, queue:new()}
     }}.
 
-handle_call(stop, From, State = #recon_io_server_state{}) ->
-    gen_server:reply(From, ok),
+handle_call(stop, From, State = #recon_io_server_state{remote_nodes = Nodes}) ->
+    R = rpc:multicall(Nodes, recon_trace, clear, [], 5000),
+    gen_server:reply(From, R),
     {stop, normal, State}.
 
 handle_cast(_Request, State = #recon_io_server_state{}) ->
@@ -64,11 +63,13 @@ terminate(warning, #recon_io_server_state{io = Io, queue = {_, Queue}}) ->
     lists:foreach(fun(Msg) -> Io ! Msg end, queue:to_list(Queue)),
     io:format("Quit: high benchmark~n"),
     ok;
+
 terminate(_Reason, _State) ->
+    io:format("Quit~n"),
     ok.
 
 code_change(_OldVsn, State = #recon_io_server_state{}, _Extra) ->
     {ok, State}.
 
-stop(Pid) ->
-    gen_server:call(Pid, stop).
+
+
